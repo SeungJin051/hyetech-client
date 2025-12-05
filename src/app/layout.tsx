@@ -34,7 +34,7 @@ export default function RootLayout({
   return (
     <html lang="ko" className="bg-gray-100">
       <body className="antialiased">
-        <div className="container mx-auto max-w-4xl flex-1 ">
+        <div className="container mx-auto max-w-4xl flex-1 px-2">
           <Header />
           {children}
           <Footer />
