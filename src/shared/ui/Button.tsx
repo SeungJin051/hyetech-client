@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
-type ButtonVariant = "primary" | "secondary" | "outline" | "ghost";
+type ButtonVariant = "primary" | "secondary" | "outline" | "ghost" | "custom";
 type ButtonSize = "sm" | "md" | "lg";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -19,6 +19,7 @@ const variantClasses: Record<ButtonVariant, string> = {
   secondary: "bg-gray-900 text-white hover:bg-gray-800",
   outline: "border border-gray-200 text-gray-900 hover:bg-gray-50 bg-white shadow-sm",
   ghost: "text-gray-700 hover:bg-gray-50",
+  custom: "",
 };
 
 const sizeClasses: Record<ButtonSize, string> = {
@@ -38,7 +39,13 @@ export const Button = ({
   ...props
 }: ButtonProps) => {
   const widthClass = fullWidth ? "w-full" : "";
-  const classes = [baseClasses, variantClasses[variant], sizeClasses[size], widthClass, className]
+  const classes = [
+    baseClasses,
+    variant !== "custom" && variantClasses[variant],
+    variant !== "custom" && sizeClasses[size],
+    widthClass,
+    className,
+  ]
     .filter(Boolean)
     .join(" ");
 
