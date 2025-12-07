@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
-import "./globals.css";
 import { Footer, Header } from "@/shared/ui";
+import QueryProvider from "@/shared/providers/QueryProvider";
+
+import "./globals.css";
 
 export const metadata: Metadata = {
   title: "혜테크 - 잠자고 있는 내 지원금 찾기",
@@ -34,11 +36,13 @@ export default function RootLayout({
   return (
     <html lang="ko" className="bg-gray-100">
       <body className="antialiased">
-        <div className="container mx-auto max-w-4xl flex-1 px-2">
-          <Header />
-          {children}
-          <Footer />
-        </div>
+        <QueryProvider>
+          <div className="container mx-auto max-w-4xl flex-1 px-2">
+            <Header />
+            {children}
+            <Footer />
+          </div>
+        </QueryProvider>
       </body>
     </html>
   );
