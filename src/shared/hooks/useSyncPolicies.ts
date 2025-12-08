@@ -1,18 +1,14 @@
 import { useMutation } from "@tanstack/react-query";
 import axios from "axios";
 
-interface SyncResult {
+interface SyncResponse {
   success: boolean;
   message: string;
-  summary: {
-    source: string;
-    status: string;
-    value: any;
-  }[];
+  error?: string;
 }
 
 // 정책을 동기화하는 API
-const syncPolicies = async (): Promise<SyncResult> => {
+const syncPolicies = async (): Promise<SyncResponse> => {
   const { data } = await axios.get("/api/batch/sync-policies");
   return data;
 };
