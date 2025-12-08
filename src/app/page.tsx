@@ -1,9 +1,8 @@
 "use client";
 
-import { Button, Header, Hero } from "@/shared/ui";
+import { Button, Hero } from "@/shared/ui";
 import { Eye, Search } from "lucide-react";
 import Link from "next/link";
-import { useTrendingPolicies } from "@/shared/hooks/useTrendingPolicies";
 
 const soonToBeSupported = [
   {
@@ -30,8 +29,6 @@ const themes = [
 ];
 
 export default function Home() {
-  const { data: trendingPolicies = [] } = useTrendingPolicies();
-
   return (
     <div className="flex flex-col gap-4">
       {/* 메인 컨테이너 */}
@@ -49,11 +46,11 @@ export default function Home() {
         {/* 현재 주목받는 지원금 */}
         <Hero title="👀 현재 주목받는 지원금">
           <div className="flex flex-col gap-4">
-            {trendingPolicies.map((policy, index) => (
+            {soonToBeSupported.map((policy, index) => (
               <div
-                key={policy.id || index}
+                key={index}
                 className={`flex flex-col gap-2 pb-2 ${
-                  index !== trendingPolicies.length - 1 ? "border-b border-gray-100" : ""
+                  index !== soonToBeSupported.length - 1 ? "border-b border-gray-100" : ""
                 }`}
               >
                 <div className="flex justify-between items-center">
@@ -61,14 +58,8 @@ export default function Home() {
                     <h4 className="text-base font-semibold">{policy.title}</h4>
                     <div className="flex items-center gap-2">
                       <Eye width={15} />
-                      <p className="text-sm text-gray-500">
-                        {policy.view_count?.toLocaleString() || 0}
-                      </p>
-                      {/* API does not return daysLeft yet */}
+                      <p className="text-sm text-gray-500">{policy.count?.toLocaleString() || 0}</p>
                     </div>
-                    {policy.summary && (
-                      <p className="text-xs text-gray-400 line-clamp-1">{policy.summary}</p>
-                    )}
                   </div>
                   <Button variant="ghost">신청하기</Button>
                 </div>
