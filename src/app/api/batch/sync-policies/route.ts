@@ -313,50 +313,97 @@ const parseStatusTargets = (content: string): string[] => {
 async function syncYouthCenter() {
   if (!YOUTH_CENTER_API_KEY) throw new Error("YOUTH_CENTER_API_KEY is missing");
 
-  console.log("[YouthCenter] Fetching 100 policies...");
+  console.log("[YouthCenter] Starting full sync...");
 
-  const params = new URLSearchParams({
+  let pageIndex = 1;
+  const pageSize = 100;
+  let totalCount = 0;
+  let totalSynced = 0;
+
+  // 1. 전체 개수 파악
+  const firstParams = new URLSearchParams({
     apiKeyNm: YOUTH_CENTER_API_KEY,
     pageNum: "1",
-    pageSize: "100",
+    pageSize: "1",
     rtnType: "json",
   });
+  const { data: firstData } = await axios.get(
+    `https://www.youthcenter.go.kr/go/ythip/getPlcy?${firstParams}`,
+  );
+  const paging = firstData.result?.pagging || firstData.pagging; // API 응답 구조 대응
 
-  const { data } = await axios.get(`https://www.youthcenter.go.kr/go/ythip/getPlcy?${params}`);
-  const policies = data.youthPolicyList || data.result?.youthPolicyList || [];
-
-  const upsertData = policies.map((p: any) => {
-    const content = (p.plcySprtCn || "") + (p.plcyExplnCn || "") + (p.plcyNm || "");
-
-    return {
-      api_source: "YOUTH",
-      source_id: p.plcyNo,
-      title: p.plcyNm,
-      summary: p.plcyExplnCn?.substring(0, 300),
-      agency_name: p.sprvsnInstCdNm,
-      // 외부 링크 접속 불가 이슈로 온통청년 상세 페이지로 통일
-      apply_url: `https://www.youthcenter.go.kr/youthPolicy/ythPlcyTotalSearch/ythPlcyDetail/${p.plcyNo}`,
-      min_age: parseInt(p.sprtTrgtMinAge) || 0,
-      max_age: parseInt(p.sprtTrgtMaxAge) || 100,
-      region_codes: mapRegion(p.zipCd || p.polyBizSecd),
-      status_targets: parseStatusTargets(content),
-      start_date: formatDate(p.bizPrdBgngYmd),
-      end_date: formatDate(p.bizPrdEndYmd),
-      benefit_tags: parseBenefitTags(content),
-      topic_tags: [p.lclsfNm || "기타"],
-      view_count: parseInt(p.inqCnt) || 0,
-    };
-  });
-
-  if (upsertData.length > 0) {
-    const { error } = await supabase.from("policies").upsert(upsertData, {
-      onConflict: "api_source, source_id",
-    });
-    if (error) throw error;
+  if (paging && paging.totCount) {
+    totalCount = paging.totCount;
+    console.log(`[YouthCenter] Total policies to sync: ${totalCount}`);
+  } else {
+    console.warn("[YouthCenter] Cannot determine total count, defaulting to 1 page check.");
+    totalCount = 100; // Fallback
   }
 
-  return upsertData.length;
+  const totalPages = Math.ceil(totalCount / pageSize);
+
+  // 2. 페이지네이션 루프
+  for (let i = 1; i <= totalPages; i++) {
+    console.log(`[YouthCenter] Fetching page ${i}/${totalPages}...`);
+
+    const params = new URLSearchParams({
+      apiKeyNm: YOUTH_CENTER_API_KEY,
+      pageNum: i.toString(),
+      pageSize: pageSize.toString(),
+      rtnType: "json",
+    });
+
+    let policies = [];
+    try {
+      const { data } = await axios.get(`https://www.youthcenter.go.kr/go/ythip/getPlcy?${params}`);
+      policies = data.youthPolicyList || data.result?.youthPolicyList || [];
+    } catch (e) {
+      console.error(`[YouthCenter] Failed to fetch page ${i}:`, e);
+      continue;
+    }
+
+    if (policies.length === 0) continue;
+
+    const upsertData = policies.map((p: any) => {
+      const content = (p.plcySprtCn || "") + (p.plcyExplnCn || "") + (p.plcyNm || "");
+
+      return {
+        api_source: "YOUTH",
+        source_id: p.plcyNo,
+        title: p.plcyNm,
+        summary: p.plcyExplnCn?.substring(0, 300),
+        agency_name: p.sprvsnInstCdNm,
+        apply_url: `https://www.youthcenter.go.kr/youthPolicy/ythPlcyTotalSearch/ythPlcyDetail/${p.plcyNo}`,
+        min_age: parseInt(p.sprtTrgtMinAge) || 0,
+        max_age: parseInt(p.sprtTrgtMaxAge) || 100,
+        region_codes: mapRegion(p.zipCd || p.polyBizSecd),
+        status_targets: parseStatusTargets(content),
+        start_date: formatDate(p.bizPrdBgngYmd),
+        end_date: formatDate(p.bizPrdEndYmd),
+        benefit_tags: parseBenefitTags(content),
+        topic_tags: [p.lclsfNm || "기타"],
+        view_count: parseInt(p.inqCnt) || 0,
+      };
+    });
+
+    if (upsertData.length > 0) {
+      const { error } = await supabase.from("policies").upsert(upsertData, {
+        onConflict: "api_source, source_id",
+      });
+      if (error) {
+        console.error(`[YouthCenter] Page ${i} upsert error:`, error);
+      } else {
+        totalSynced += upsertData.length;
+      }
+    }
+  }
+
+  console.log(`[YouthCenter] ✅ Sync Completed! Total Synced: ${totalSynced}`);
+  return totalSynced;
 }
+
+// Helper: 지연 함수 (Rate Limit 방지)
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * 정부24 (Gov24) 데이터 동기화
@@ -364,87 +411,144 @@ async function syncYouthCenter() {
 async function syncGov24() {
   if (!GOV24_API_KEY) throw new Error("GOV24_API_KEY is missing");
 
-  console.log("[Gov24] Fetching 100 policies...");
+  console.log("[Gov24] Starting full sync...");
 
-  const params = new URLSearchParams({
+  const pageSize = 50; // 상세 조회 부하 고려하여 50개씩
+  let totalCount = 0;
+  let totalSynced = 0;
+
+  // 1. 전체 개수 파악
+  const firstParams = new URLSearchParams({
     serviceKey: GOV24_API_KEY,
     page: "1",
-    perPage: "100",
+    perPage: "1",
     returnType: "JSON",
   });
-
-  const { data: listData } = await axios.get(
-    `https://api.odcloud.kr/api/gov24/v3/serviceList?${params}`,
+  const { data: firstData } = await axios.get(
+    `https://api.odcloud.kr/api/gov24/v3/serviceList?${firstParams}`,
   );
-  const services = listData.data || [];
 
-  // 병렬 처리로 상세 정보 조회 속도 개선
-  const promises = services.map(async (item: any) => {
-    const svcId = item["서비스ID"];
-    let detail = {};
-
-    try {
-      // cond 파라미터 대괄호 인코딩 문제 해결을 위한 수동 쿼리 스트링 구성
-      const baseParams = new URLSearchParams({
-        serviceKey: GOV24_API_KEY!,
-        returnType: "JSON",
-      });
-      const queryString = `${baseParams.toString()}&cond[서비스ID::EQ]=${svcId}`;
-
-      const { data: detailData } = await axios.get(
-        `https://api.odcloud.kr/api/gov24/v3/serviceDetail?${queryString}`,
-      );
-      if (detailData.data && detailData.data.length > 0) {
-        detail = detailData.data[0];
-      }
-    } catch (e) {
-      console.error(`Failed to fetch detail for ${svcId}`, e);
-    }
-
-    const content =
-      (item["지원대상"] || "") + (item["선정기준"] || "") + ((detail as any)["지원대상"] || "");
-    const benefitContent =
-      (item["지원유형"] || "") + (item["서비스명"] || "") + ((detail as any)["서비스목적"] || "");
-
-    return {
-      api_source: "GOV24",
-      source_id: svcId,
-      title: item["서비스명"],
-      summary: (detail as any)["서비스목적"] || item["서비스목적요약"],
-      agency_name: item["소관기관명"],
-      // 개별 운영 사이트 접속 불가 이슈로 정부24 표준 상세 페이지로 통일
-      apply_url: `https://www.gov.kr/portal/service/serviceInfo/${svcId}`,
-      min_age: 0,
-      max_age: 100,
-      region_codes: mapRegion(item["소관기관명"]),
-      status_targets: parseStatusTargets(content),
-      start_date: null,
-      end_date: null,
-      benefit_tags: parseBenefitTags(benefitContent),
-      topic_tags: item["서비스분야"] ? [item["서비스분야"]] : ["기타"],
-      view_count: parseInt(item["조회수"]) || 0,
-    };
-  });
-
-  const upsertData = await Promise.all(promises);
-
-  if (upsertData.length > 0) {
-    const { error } = await supabase.from("policies").upsert(upsertData, {
-      onConflict: "api_source, source_id",
-    });
-    if (error) throw error;
+  if (firstData.totalCount) {
+    totalCount = firstData.totalCount;
+    console.log(`[Gov24] Total services to sync: ${totalCount}`);
+  } else {
+    console.warn("[Gov24] Cannot determine total count, defaulting to 100.");
+    totalCount = 100;
   }
 
-  return upsertData.length;
+  // 너무 많은 요청 방지를 위해 최대 2000개로 제한 (필요 시 해제)
+  // totalCount = Math.min(totalCount, 2000);
+
+  const totalPages = Math.ceil(totalCount / pageSize);
+
+  // 2. 페이지네이션 루프
+  for (let i = 1; i <= totalPages; i++) {
+    console.log(`[Gov24] Fetching page ${i}/${totalPages}...`);
+
+    const params = new URLSearchParams({
+      serviceKey: GOV24_API_KEY,
+      page: i.toString(),
+      perPage: pageSize.toString(),
+      returnType: "JSON",
+    });
+
+    let services = [];
+    try {
+      const { data: listData } = await axios.get(
+        `https://api.odcloud.kr/api/gov24/v3/serviceList?${params}`,
+      );
+      services = listData.data || [];
+    } catch (e) {
+      console.error(`[Gov24] Failed to fetch page ${i}:`, e);
+      continue; // 해당 페이지 실패 시 다음 페이지로 진행
+    }
+
+    if (services.length === 0) continue;
+
+    // 병렬 처리로 상세 정보 조회 (Rate Limit 고려하여 청크 단위 처리 또는 지연 추가 권장)
+    // 여기서는 단순 병렬 처리하되, 너무 빠르면 400/429 에러 발생 가능성 있음
+    const promises = services.map(async (item: any, index: number) => {
+      // 약간의 지연 추가 (순차적 실행 효과)
+      await delay(index * 50);
+
+      const svcId = item["서비스ID"];
+      let detail = {};
+
+      try {
+        const baseParams = new URLSearchParams({
+          serviceKey: GOV24_API_KEY!,
+          returnType: "JSON",
+        });
+        const queryString = `${baseParams.toString()}&cond[서비스ID::EQ]=${svcId}`;
+
+        const { data: detailData } = await axios.get(
+          `https://api.odcloud.kr/api/gov24/v3/serviceDetail?${queryString}`,
+        );
+        if (detailData.data && detailData.data.length > 0) {
+          detail = detailData.data[0];
+        }
+      } catch (e) {
+        console.error(`Failed to fetch detail for ${svcId}`, e);
+      }
+
+      const content =
+        (item["지원대상"] || "") + (item["선정기준"] || "") + ((detail as any)["지원대상"] || "");
+      const benefitContent =
+        (item["지원유형"] || "") + (item["서비스명"] || "") + ((detail as any)["서비스목적"] || "");
+
+      return {
+        api_source: "GOV24",
+        source_id: svcId,
+        title: item["서비스명"],
+        summary: (detail as any)["서비스목적"] || item["서비스목적요약"],
+        agency_name: item["소관기관명"],
+        apply_url: `https://www.gov.kr/portal/service/serviceInfo/${svcId}`,
+        min_age: 0,
+        max_age: 100,
+        region_codes: mapRegion(item["소관기관명"]),
+        status_targets: parseStatusTargets(content),
+        start_date: null,
+        end_date: null,
+        benefit_tags: parseBenefitTags(benefitContent),
+        topic_tags: item["서비스분야"] ? [item["서비스분야"]] : ["기타"],
+        view_count: parseInt(item["조회수"]) || 0,
+      };
+    });
+
+    const upsertData = await Promise.all(promises);
+
+    if (upsertData.length > 0) {
+      const { error } = await supabase.from("policies").upsert(upsertData, {
+        onConflict: "api_source, source_id",
+      });
+      if (error) {
+        console.error(`[Gov24] Page ${i} upsert error:`, error);
+      } else {
+        totalSynced += upsertData.length;
+      }
+    }
+  }
+
+  console.log(`[Gov24] ✅ Sync Completed! Total Synced: ${totalSynced}`);
+  return totalSynced;
 }
 
 // ------------------------------------------------------------------
 // 4. API Handler
 // ------------------------------------------------------------------
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    // 보안 인증: CRON_SECRET 확인
+    const authHeader = request.headers.get("authorization");
+    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    console.time("BatchSync");
     const [youthCount, govCount] = await Promise.all([syncYouthCenter(), syncGov24()]);
+    console.timeEnd("BatchSync");
+    console.log("🎉 All Sync Tasks Completed Successfully!");
 
     return NextResponse.json({
       success: true,
